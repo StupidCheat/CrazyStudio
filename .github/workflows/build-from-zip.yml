@@ -1,0 +1,60 @@
+name: Build APK desde ZIP
+
+on:
+  push:
+    paths:
+      - '*.zip'          # se ejecuta al subir/actualizar un .zip en la raíz
+  workflow_dispatch:
+
+permissions:
+  contents: write        # necesario para publicar el APK en Releases
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Descomprimir el ZIP
+        run: |
+          ZIP=$(ls -1 *.zip 2>/dev/null | head -n 1)
+          if [ -z "$ZIP" ]; then echo "No hay ningún .zip en la raíz del repo"; exit 1; fi
+          echo "Usando: $ZIP"
+          mkdir -p _src
+          unzip -q "$ZIP" -d _src
+          # Localiza la carpeta del proyecto (la que contiene settings.gradle.kts)
+          SETTINGS=$(find _src -name "settings.gradle*" -not -path "*/node_modules/*" | head -n 1)
+          if [ -z "$SETTINGS" ]; then echo "No se encontró settings.gradle(.kts) dentro del ZIP"; exit 1; fi
+          PROJECT_DIR=$(dirname "$SETTINGS")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Proyecto en: $PROJECT_DIR"
+
+      - name: Instalar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Instalar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Compilar APK (debug)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Subir APK como Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-debug
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Publicar APK en Releases (descarga directa)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: APK #${{ github.run_number }}
+          files: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
